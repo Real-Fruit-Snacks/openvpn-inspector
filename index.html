@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenVPN Inspector</title>
+<meta name="description" content="Paste or open an .ovpn file (or a .crt/.pem) and see every certificate&#x27;s expiry, details, and config security flags — entirely in your browser.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Crect%20width='16'%20height='16'%20rx='3'%20fill='%23090c0d'/%3E%3Cpath%20d='M3.5%205L6.5%208L3.5%2011'%20fill='none'%20stroke='%2363f2ab'%20stroke-width='1.4'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3Crect%20x='8'%20y='9.6'%20width='5'%20height='1.5'%20rx='0.5'%20fill='%2363f2ab'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#0e1214">
+<script>(function(){try{
+var t=localStorage.getItem("ovpn-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);
+var a=localStorage.getItem("ovpn-accent");if(a&&"12345".indexOf(a)>-1)document.documentElement.setAttribute("data-accent",a);
+var pm=localStorage.getItem("ovpn-pet");document.documentElement.setAttribute("data-pet",pm==="off"?"off":(pm==="cursor"?"cursor":"float"));
+var ps=parseInt(localStorage.getItem("ovpn-pet-size"),10);if(ps>=16&&ps<=64)document.documentElement.style.setProperty("--pet-size",ps+"px");
+var po=parseInt(localStorage.getItem("ovpn-pet-opacity"),10);if(po>=15&&po<=100)document.documentElement.style.setProperty("--pet-base-opacity",(po/100).toFixed(3));
+}catch(e){}})();</script>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/site.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="manifest-label site-title">OPENVPN INSPECTOR</span>
+  <span class="topbar-actions">
+    <button id="btn-settings" class="icon-btn" title="Settings (s)" aria-label="Settings"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.4" fill="none"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button>
+    <button id="btn-theme" class="icon-btn" title="Toggle theme (t)" aria-label="Toggle theme"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M13 9.5A5.5 5.5 0 1 1 6.5 3 4.5 4.5 0 0 0 13 9.5Z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/></svg></button>
+  </span>
+</header>
+<main>
+  <article class="note note-wide">
+    <header class="note-header"><h1>OpenVPN Inspector</h1><p class="tool-desc">Paste or open an .ovpn file (or a .crt/.pem) and see every certificate&#x27;s expiry, details, and config security flags — entirely in your browser.</p></header>
+<div class="ov-privacy manifest-label">🔒 Everything is parsed in your browser — nothing,
+including private keys, is ever sent anywhere.</div>
+<p>Paste an <code>.ovpn</code> config below, or open a file. Bare
+<code>.crt</code>/<code>.pem</code> certificates work too.</p>
+<div class="ov-controls">
+  <label class="ov-file-btn">open file…
+    <input type="file" id="ov-file" accept=".ovpn,.crt,.pem,.cer,.conf,.txt" hidden>
+  </label>
+  <span id="ov-filename" class="ov-dim"></span>
+</div>
+<textarea id="ov-input" rows="7" placeholder="client&#10;dev tun&#10;remote vpn.example.com 1194&#10;&lt;ca&gt;&#10;-----BEGIN CERTIFICATE-----&#10;…&#10;-----END CERTIFICATE-----&#10;&lt;/ca&gt;" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+<div class="ov-examples">
+  <span class="ov-dim">try:</span>
+  <button type="button" class="ov-example" data-sample="full">sample .ovpn</button>
+  <button type="button" class="ov-example" data-sample="cert">client cert only</button>
+  <button type="button" class="ov-example" data-sample="expired">expired cert</button>
+</div>
+<div id="ov-error" class="ov-error" hidden></div>
+<div id="ov-summary" class="ov-summary" hidden></div>
+<div id="ov-flags" class="ov-flags" hidden></div>
+<div id="ov-certs"></div>
+<div id="ov-config-wrap" hidden>
+  <div class="manifest-label ov-caption">configuration</div>
+  <table class="ov-config"><tbody id="ov-config"></tbody></table>
+</div>
+<details class="tool-learn"><summary class="manifest-label">openvpn pki &amp; x.509 101</summary><div class="tool-learn-body"><h3>How an OpenVPN identity fits together</h3>
+<p>OpenVPN authenticates with a small <strong>public-key infrastructure (PKI)</strong>.
+An <code>.ovpn</code> file usually bundles four things, either inline (in
+<code>&lt;ca&gt;</code>, <code>&lt;cert&gt;</code>, <code>&lt;key&gt;</code>,
+<code>&lt;tls-auth&gt;</code> tags) or as external file references:</p>
+<table>
+<thead><tr><th>piece</th><th>role</th></tr></thead>
+<tbody>
+<tr><td><strong>CA certificate</strong> (<code>ca</code>)</td><td>the trust anchor — both sides verify the other's cert was signed by this CA</td></tr>
+<tr><td><strong>client certificate</strong> (<code>cert</code>)</td><td>this client's public identity, signed by the CA, carrying <code>clientAuth</code></td></tr>
+<tr><td><strong>private key</strong> (<code>key</code>)</td><td>the secret that proves ownership of the certificate — <em>never share it</em></td></tr>
+<tr><td><strong>tls-auth / tls-crypt key</strong> (<code>ta.key</code>)</td><td>a shared static key that HMAC-signs (or encrypts) the control channel, so unauthenticated packets are dropped before any TLS work</td></tr>
+</tbody>
+</table>
+<p>The server has its own certificate carrying <code>serverAuth</code>, signed by the
+same CA. <code>remote-cert-tls server</code> makes the client insist the server's cert
+actually has that server role — without it, one client's cert could impersonate the
+server.</p>
+
+<h3>What's inside a certificate</h3>
+<p>An X.509 certificate is a DER-encoded (ASN.1 binary) structure, Base64-wrapped
+between <code>-----BEGIN CERTIFICATE-----</code> markers. The fields this tool
+decodes:</p>
+<ul>
+<li><strong>Validity</strong> — <code>notBefore</code> and <code>notAfter</code>. This
+is the field that silently breaks VPNs (see below).</li>
+<li><strong>Subject / Issuer</strong> — distinguished names (CN, O, C…). The issuer of
+a client cert equals the subject of the CA that signed it.</li>
+<li><strong>Public key</strong> — RSA (2048-bit is the common floor) or EC (P-256 is
+smaller and faster for the same security).</li>
+<li><strong>Extensions</strong> — Basic Constraints (is this a CA?), Key Usage,
+Extended Key Usage (<code>clientAuth</code> vs <code>serverAuth</code>), and Subject
+Alternative Names.</li>
+<li><strong>Fingerprint</strong> — the SHA-256 hash of the whole cert, for pinning or
+comparing "is this the same cert?"</li>
+</ul>
+
+<h3>Why expiry is the silent killer</h3>
+<p>Certificates expire. When a client or — worse — a server certificate passes its
+<code>notAfter</code> date, the TLS handshake fails and every VPN connection drops,
+usually with an opaque <code>certificate has expired</code> in the logs and a 3 a.m.
+phone call. CA certificates are the sneakiest: they're often issued for 10 years and
+then forgotten, taking down the entire deployment at once. This tool flags anything
+under 90 days (amber) and under 30 days or already expired (red) so you can renew on
+your schedule instead of the certificate's.</p>
+
+<h3>Checking dates from a shell</h3>
+<pre><code># show a certificate's validity window
+openssl x509 -in client.crt -noout -dates
+
+# is it expired, or will it be within 30 days? (exit code answers)
+openssl x509 -in client.crt -noout -checkend 2592000
+
+# pull the cert straight off a running server
+echo | openssl s_client -connect vpn.example.com:1194 2&gt;/dev/null \
+  | openssl x509 -noout -dates -subject</code></pre>
+
+<h3>Security directives worth auditing</h3>
+<ul>
+<li><strong>comp-lzo / compress</strong> — compression before encryption enables the
+<em>VORACLE</em> attack; modern OpenVPN turns it off by default. Remove it.</li>
+<li><strong>cipher</strong> — <code>BF-CBC</code> (Blowfish) is the old default and is
+vulnerable to <em>SWEET32</em>; <code>DES</code> is broken. Use
+<code>AES-256-GCM</code>.</li>
+<li><strong>auth</strong> — the control-channel HMAC. <code>MD5</code> and
+<code>SHA1</code> are weak; prefer <code>SHA256</code>.</li>
+<li><strong>tls-version-min 1.2</strong> — pin it so the tunnel refuses ancient TLS.</li>
+<li><strong>Key handling</strong> — the private key inside an <code>.ovpn</code> is a
+credential. That's exactly why a tool like this should run in your browser
+and never upload the file — which is how this one works.</li>
+</ul>
+</div></details>
+  </article>
+</main>
+<footer class="footer">
+  <span class="mono">runs entirely in your browser · nothing is uploaded</span>
+  <a class="mono" href="https://github.com/Real-Fruit-Snacks/openvpn-inspector" rel="noopener">source</a>
+</footer>
+
+<div id="settings-panel" class="settings-panel" role="dialog" aria-modal="true" aria-label="Settings" hidden></div>
+<div id="settings-scrim" class="settings-scrim" hidden></div>
+<div id="help-overlay" class="help-overlay" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" hidden></div>
+<div id="site-pet" aria-hidden="true"><div class="pet-tilt"><div class="pet-sprite" title="pet the ghost to recolor it"><svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path class="pet-body" d="M2 16 V7 Q2 1 8 1 Q14 1 14 7 V16 L12 14.4 L10 16 L8 14.4 L6 16 L4 14.4 Z"/><g class="pet-eyes-open"><rect x="5" y="6" width="2" height="3"/><rect x="9" y="6" width="2" height="3"/></g><g class="pet-eyes-closed"><rect x="5" y="8" width="2" height="1"/><rect x="9" y="8" width="2" height="1"/></g><g class="pet-eyes-happy"><path d="M4.6 8 L6 6.6 L7.4 8"/><path d="M8.6 8 L10 6.6 L11.4 8"/></g></svg></div></div></div>
+
+<script src="js/settings.js"></script>
+<script src="js/x509.js"></script>
+<script src="js/samples.js"></script>
+<script src="js/tool.js"></script>
+<script src="js/content.js"></script>
+<script src="js/pet.js"></script>
+</body>
+</html>
